@@ -1,0 +1,59 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== 隐私 / 作品保护 =====
+# 个人参考音频(任何格式)—— 永远不提交
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.pcm
+*.aac
+*.ogg
+*.opus
+*.wma
+
+# 默认生成的合成产物
+output_speech.*
+output_speech_*.mp3
+*.tts_out.*
+tts_out/
+synth_out/
+
+# 用户样例输入 / 测试产物
+samples/
+test_*.wav
+test_*.mp3
+demo/
+
+# ===== 凭据 / 本地调参 =====
+# API key 等凭据(本项目用 env,不应被提交)
+.env
+.env.*
+*.local
+config.local.json
+
+# 临时调参文件(避免误传 venv / state)
+*.tmp
+*.bak
+
+# ===== 编辑器 / OS =====
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+*~
