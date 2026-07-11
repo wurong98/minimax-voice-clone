@@ -138,9 +138,10 @@ clone-voice/
 │   ├── api.py                    # 所有 MiniMax HTTP 接口封装
 │   ├── ui.py                     # Rich Console / Table / Confirm
 │   └── cli.py                    # 所有 Typer 命令 + app / sub-app
+├── docs/
+│   ├── README.md                 # 你正在看的这个
+│   └── API_REFERENCE.md          # 12 个端点的完整 schema 速查
 ├── samples/                      # 个人待克隆原始音频(不进 git)
-├── API_REFERENCE.md              # 11 个端点的完整 schema 速查
-├── README.md                     # 你正在看的这个
 ├── .gitignore                    # 屏蔽个人音频 + 凭据
 └── .gitattributes
 ```
