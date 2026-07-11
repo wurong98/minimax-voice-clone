@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Optional
@@ -740,6 +743,89 @@ def batch_sub(
     )
     if fail and not continue_on_error:
         raise typer.Exit(code=1)
+
+
+# ============================================================
+# 交互菜单 (↑↓ + Enter 真键盘导航;非 TTY 回退为 Rich 数字菜单)
+# ============================================================
+MENU_ITEMS: list[tuple[str, str]] = [
+    ("tts",            "同步合成 (TTS)                  →  用本地缓存的 voice_id"),
+    ("tts-async",      "异步合成 (TTS)                  →  长文 / >3000 字符"),
+    ("run",            "完整流程 (Run)                  →  上传 → 克隆 → 合成"),
+    ("clone",          "只克隆 (Clone)                  →  上传 + clone,试听可选"),
+    ("design",         "文字生音色 (Design)            →  /v1/voice_design"),
+    ("voices list",    "管理音色 ▸ 列出                →  当前账号 voice_id"),
+    ("voices delete",  "管理音色 ▸ 删除                →  需要二次确认"),
+    ("files list",     "管理文件 ▸ 列出                →  按 purpose 分类"),
+    ("files retrieve", "管理文件 ▸ 查元信息            →  by file_id"),
+    ("files download", "管理文件 ▸ 下载                →  by file_id"),
+    ("files delete",   "管理文件 ▸ 删除                →  需要二次确认"),
+    ("config show",    "本地默认 ▸ 查看                →  ~/.config/clone-voice/"),
+    ("config set",     "本地默认 ▸ 设置                →  KEY=VAL …"),
+    ("config clear",   "本地默认 ▸ 清空                →  需要二次确认"),
+    ("quit",           "退出                           →  直接走"),
+]
+
+
+def _dispatch_subcommand(args: list[str]) -> int:
+    """用同一 Python 解释器 + 入口脚本重新执行某个子命令(保留 stdin/stdout)。"""
+    if not sys.argv[0]:
+        return 1
+    cmd = [sys.executable, sys.argv[0]] + args
+    return subprocess.call(cmd)
+
+
+def _run_radiolist(title: str, items: list[tuple[Any, str]]) -> Any:
+    """TTY 模式 ↑↓+Enter 选择;失败回退到 Rich 数字 prompt。"""
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        try:
+            from prompt_toolkit.shortcuts import radiolist_dialog
+            return radiolist_dialog(
+                title=title,
+                text="↑↓ 选择,Enter 确认,Esc 退出",
+                values=[(k, l) for k, l in items],
+            ).run()
+        except Exception:
+            pass
+    # Fallback: 数字菜单
+    console.print(f"[bold]{title}[/bold]")
+    for idx, (_k, label) in enumerate(items, 1):
+        console.print(f"  [cyan]{idx:>2}[/cyan]  {label}")
+    from rich.prompt import Prompt
+    raw = Prompt.ask(
+        "\n选 [1-{}]".format(len(items)),
+        choices=[str(i) for i in range(1, len(items) + 1)],
+        default=str(len(items)),
+    )
+    return items[int(raw) - 1][0]
+
+
+@app.command("menu")
+def menu_sub():
+    """↑↓ + Enter 交互菜单,选中后直接 dispatch 子命令。"""
+    while True:
+        console.print()
+        selected = _run_radiolist("🎤  MiniMax CLI 主菜单", MENU_ITEMS)
+
+        if not selected or selected == "quit":
+            typer.secho("\n👋 已退出菜单。", fg=typer.colors.CYAN)
+            return
+
+        typer.secho(f"\n→ 执行:[bold cyan]{selected}[/bold cyan]", bold=True)
+        rc = _dispatch_subcommand(selected.split())
+        typer.secho(f"\n⏎ 退出码 {rc}。回菜单? [Y/n]", fg=typer.colors.CYAN)
+        # 在 TTY 模式直接 enter 默认 Y,非 TTY 走 prompt
+        if not sys.stdin.isatty():
+            from rich.prompt import Confirm
+            if not Confirm.ask("回菜单?", default=True):
+                return
+        # TTY 模式:enter 直接续;或输入 n 退
+        try:
+            ans = input("  (Enter 回菜单,n 退出): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if ans == "n":
+            return
 
 
 # ============================================================
