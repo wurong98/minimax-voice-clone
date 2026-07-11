@@ -4,17 +4,21 @@
 """
 from __future__ import annotations
 
+import csv
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
+from rich.console import Group
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, BarColumn, MofNCompleteColumn
 
 from .config import (
     MAX_UPLOAD_BYTES,
     DEFAULT_POLL_INTERVAL, DEFAULT_POLL_TIMEOUT,
-    CONFIG_FILE, INTERNAL_DEFAULTS,
+    CONFIG_FILE, INTERNAL_DEFAULTS, ALLOWED_EMOTIONS,
     resolve_api_key, validate_voice_id, validate_emotion, validate_model,
     load_config, save_config, update_config, resolve_with_config,
 )
@@ -557,6 +561,184 @@ def files_download(
         f"  ✅ 已下载:{output} ({len(audio)/1024:.1f} KB)",
         fg=typer.colors.GREEN,
     )
+
+
+# ============================================================
+# 批量并发合成 (CSV / JSON → tts_synthesize)
+# ============================================================
+def _load_batch_items(path: Path) -> list[dict[str, Any]]:
+    """读 CSV 或 JSON 的任务列表。
+
+    CSV 表头至少 voice_id,text,output;其余字段(model / emotion / speed / ...)可选。
+    JSON 是 list of dict。
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"--input {path} 不存在")
+    suf = path.suffix.lower()
+    if suf == ".json":
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            raise ValueError("JSON 必须是 list of dict")
+        return data
+    if suf == ".csv":
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            items = list(reader)
+        return items
+    raise ValueError(f"暂只支持 .csv / .json, 收到 {suf}")
+
+
+@app.command("batch")
+def batch_sub(
+    input: Path = typer.Option(
+        ..., "--input", "-i",
+        help="CSV 或 JSON 文件路径",
+        exists=True, readable=True,
+    ),
+    workers: int = typer.Option(
+        4, "--workers", "-w", min=1, max=32,
+        help="并发数(默认 4)",
+    ),
+    continue_on_error: bool = typer.Option(
+        True, "--continue-on-error/--fail-fast",
+        help="单条失败时是否继续(默认继续)",
+    ),
+    api_key: Optional[str] = typer.Option(
+        None, "--api-key", "-k", envvar="MINIMAX_API_KEY",
+    ),
+):
+    """批量并发合成:从 CSV / JSON 读多条任务,用 ThreadPoolExecutor 并行跑 tts。
+
+    CSV 表头至少:`voice_id,text,output`;可选字段:`model, emotion, speed, pitch,
+    volume, response_format, sample_rate, bitrate, channel, language_boost`。
+
+    JSON 是 list of dict,字段同上。
+
+    每条失败会写到 `<output>.err.txt`,进度条实时显示。
+    """
+    key = resolve_api_key(api_key)
+    raw_items = _load_batch_items(input)
+
+    # 校验 + 标准化
+    jobs: list[dict[str, Any]] = []
+    bad: list[tuple[int, str]] = []
+    cfg = load_config()
+    for idx, it in enumerate(raw_items):
+        if "voice_id" not in it or not it["voice_id"]:
+            bad.append((idx, "缺少 voice_id")); continue
+        if "text" not in it or not it["text"]:
+            bad.append((idx, "缺少 text")); continue
+        if "output" not in it or not it["output"]:
+            bad.append((idx, "缺少 output")); continue
+
+        def _get(k: str) -> Any:
+            v = it.get(k)
+            if v is None or v == "":
+                v = cfg.get(k)
+            if v is None or v == "":
+                v = INTERNAL_DEFAULTS.get(k)
+            return v
+
+        model_v = str(_get("model") or "speech-2.8-hd")
+        if model_v not in ALLOWED_EMOTIONS and model_v not in (
+            "speech-2.8-hd","speech-2.8-turbo","speech-2.6-hd",
+            "speech-2.6-turbo","speech-02-hd","speech-02-turbo",
+            "speech-01-hd","speech-01-turbo",
+        ):
+            bad.append((idx, f"非法 model: {model_v}")); continue
+        emo_v = str(_get("emotion") or "neutral")
+        if emo_v not in ALLOWED_EMOTIONS:
+            bad.append((idx, f"非法 emotion: {emo_v}")); continue
+
+        try:
+            jobs.append({
+                "voice_id": str(it["voice_id"]),
+                "text":     str(it["text"]),
+                "output":   Path(it["output"]),
+                "model":    model_v,
+                "emotion":  emo_v,
+                "speed":    float(_get("speed") or 1.0),
+                "pitch":    int(_get("pitch") or 0),
+                "volume":   float(_get("volume") or 1.0),
+                "response_format": str(_get("response_format") or "mp3"),
+                "sample_rate": int(_get("sample_rate") or 32000),
+                "bitrate":  int(_get("bitrate") or 128000),
+                "channel":  int(_get("channel") or 1),
+                "language_boost": it.get("language_boost"),
+            })
+        except (TypeError, ValueError) as e:
+            bad.append((idx, f"参数解析失败: {e}"))
+
+    if bad:
+        typer.secho("❌ 以下任务有问题:", fg=typer.colors.RED)
+        for idx, msg in bad:
+            typer.secho(f"   [{idx}] {msg}", fg=typer.colors.RED)
+        if not continue_on_error:
+            raise typer.Exit(code=1)
+
+    if not jobs:
+        typer.secho("⚠️  没有合法任务,啥也不干。", fg=typer.colors.YELLOW)
+        raise typer.Exit(code=0)
+
+    typer.secho(
+        f"  🚀 启动批量:共 {len(jobs)} 条,workers={workers}",
+        fg=typer.colors.CYAN,
+    )
+
+    ok, fail = 0, 0
+    with Progress(
+        TextColumn("[cyan]批量合成[/cyan]"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task_id = progress.add_task("tts", total=len(jobs))
+
+        def _one(job: dict[str, Any]) -> tuple[str, str]:
+            """返回 (status, info):'ok'/<output> 或 'err'/<msg>"""
+            try:
+                tts_synthesize(
+                    key,
+                    voice_id=job["voice_id"],
+                    text=job["text"], out_path=job["output"],
+                    model=job["model"], emotion=job["emotion"],
+                    speed=job["speed"], pitch=job["pitch"], volume=job["volume"],
+                    response_format=job["response_format"],
+                    sample_rate=job["sample_rate"], bitrate=job["bitrate"],
+                    channel=job["channel"],
+                    language_boost=job["language_boost"],
+                    quiet=True,
+                )
+                return ("ok", str(job["output"]))
+            except Exception as e:
+                return ("err", f"{job['output']}: {e}")
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_one, j): j for j in jobs}
+            for fut in as_completed(futures):
+                status, info = fut.result()
+                if status == "ok":
+                    ok += 1
+                else:
+                    fail += 1
+                    err_path = Path(str(futures[fut]["output"]) + ".err.txt")
+                    try:
+                        err_path.parent.mkdir(parents=True, exist_ok=True)
+                        err_path.write_text(info + "\n", encoding="utf-8")
+                        typer.secho(f"  ❌ {info} → {err_path}", fg=typer.colors.RED)
+                    except OSError:
+                        pass
+                progress.update(task_id, advance=1)
+
+    typer.secho(
+        f"\n  📊 完成:成功 {ok}, 失败 {fail} (失败时写到 <output>.err.txt)",
+        fg=typer.colors.GREEN if fail == 0 else typer.colors.YELLOW,
+    )
+    if fail and not continue_on_error:
+        raise typer.Exit(code=1)
 
 
 # ============================================================
