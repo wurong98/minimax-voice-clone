@@ -89,8 +89,8 @@ def run(
     ),
     text: str = typer.Option(..., "--text", "-t", help="要转成语音的文字"),
     output: Path = typer.Option(
-        Path("output_speech.mp3"), "--output", "-o",
-        help="合成结果保存路径",
+        Path("output/output_speech.mp3"), "--output", "-o",
+        help="合成结果保存路径(默认到 output/ 目录)",
     ),
     api_key: Optional[str] = typer.Option(
         None, "--api-key", "-k",
@@ -176,8 +176,8 @@ def tts_sub(
         help="音色 ID。省略时从 ~/.config/clone-voice/config.json 读",
     ),
     output: Path = typer.Option(
-        Path("output_speech.mp3"), "--output", "-o",
-        help="合成结果保存路径",
+        Path("output/output_speech.mp3"), "--output", "-o",
+        help="合成结果保存路径(默认到 output/ 目录)",
     ),
     model: Optional[str] = typer.Option(None, "--model", "-m"),
     emotion: Optional[str] = typer.Option(None, "--emotion", "-e"),
@@ -290,7 +290,7 @@ def design_sub(
         None, "--voice-id", "-v", help="自定义 voice_id;省略则自动生成",
     ),
     output: Path = typer.Option(
-        Path("design_preview.mp3"), "--output", "-o", help="试听音频保存路径",
+        Path("output/design_preview.mp3"), "--output", "-o", help="试听音频保存路径(默认到 output/ 目录)",
     ),
     api_key: Optional[str] = typer.Option(
         None, "--api-key", "-k", envvar="MINIMAX_API_KEY",
@@ -327,7 +327,8 @@ def tts_async_sub(
         help="要合成的长文本(>3000 字符推荐用异步)",
     ),
     output: Path = typer.Option(
-        Path("output_speech.mp3"), "--output", "-o",
+        Path("output/output_speech.mp3"), "--output", "-o",
+        help="合成结果保存路径(默认到 output/ 目录)",
     ),
     voice_id: Optional[str] = typer.Option(None, "--voice-id", "-v"),
     model: Optional[str] = typer.Option(None, "--model", "-m"),

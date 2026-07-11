@@ -141,7 +141,8 @@ clone-voice/
 ├── docs/
 │   ├── README.md                 # 你正在看的这个
 │   └── API_REFERENCE.md          # 12 个端点的完整 schema 速查
-├── samples/                      # 个人待克隆原始音频(不进 git)
+├── samples/                      # ⬅ 待克隆原始音频(gitignored)
+├── output/                       # ⬅ 合成的产物 mp3(默认输出目录,gitignored)
 ├── .gitignore                    # 屏蔽个人音频 + 凭据
 └── .gitattributes
 ```
@@ -163,8 +164,15 @@ python minimax_voice_clone.py run samples/my_voice.wav \
 # 先开新音色
 python minimax_voice_clone.py clone samples/my_voice.wav --voice-id MyVoice001
 # 之后所有合成走 cache
-python minimax_voice_clone.py tts --text "另一段话" -o out.mp3
+python minimax_voice_clone.py tts --text "另一段话" -o /path/to/out.mp3
 ```
+
+## 输出目录约定
+
+所有 TTS 合成的产物默认落到 `output/` 里(在仓库根、gitignored):
+- `output/output_speech.mp3`(同步合成默认名)
+- `output/design_preview.mp3`(voice-design 的试听)
+- 自定义输出路径用 `--output path/to/anywhere.mp3` 即可。
 
 ---
 

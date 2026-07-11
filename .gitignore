@@ -32,6 +32,9 @@ output_speech_*.mp3
 tts_out/
 synth_out/
 
+# 项目内 TTS 输出目录(主仓)
+output/
+
 # 用户样例输入 / 测试产物
 samples/
 test_*.wav
