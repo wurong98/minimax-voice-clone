@@ -24,6 +24,7 @@ from .config import (
     CONFIG_FILE, INTERNAL_DEFAULTS, ALLOWED_EMOTIONS,
     resolve_api_key, validate_voice_id, validate_emotion, validate_model,
     load_config, save_config, update_config, resolve_with_config,
+    _parse_config_value,
 )
 from .api import (
     VOICE_TYPES_ALL, VOICE_TYPES_DELETABLE, FILE_PURPOSES,
@@ -890,7 +891,7 @@ def config_sub(
             if k not in INTERNAL_DEFAULTS:
                 bad.append(p)
                 continue
-            updates[k] = v
+            updates[k] = _parse_config_value(v)
         if bad:
             typer.secho(
                 f"❌ 以下参数不合法:{bad}\n   允许:{sorted(INTERNAL_DEFAULTS.keys())}",

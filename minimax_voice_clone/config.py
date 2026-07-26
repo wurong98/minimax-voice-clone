@@ -59,6 +59,44 @@ INTERNAL_DEFAULTS: dict[str, Any] = {
     "response_format": "mp3",
 }
 
+# config 里数字类 key 的期望类型(用于防御性 cast,免得旧脏数据全是字符串)
+_FLOAT_CONFIG_KEYS = frozenset({"speed", "volume"})
+_INT_CONFIG_KEYS = frozenset({"pitch", "sample_rate", "bitrate", "channel"})
+
+
+def _parse_config_value(raw: str) -> Any:
+    """`config set KEY=VAL` 时把字符串解析成合适的类型:int → float → str。
+
+    字符串保留空白 / 非数字字符就走 str。
+    """
+    s = raw.strip()
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    return raw
+
+
+def _coerce_to_expected_type(key: str, value: Any) -> Any:
+    """按 key 把读出来的值转成期望类型;失败时尽量 fallback 到内置默认值。"""
+    if value is None:
+        return None
+    if key in _FLOAT_CONFIG_KEYS:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return INTERNAL_DEFAULTS.get(key)
+    if key in _INT_CONFIG_KEYS:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return INTERNAL_DEFAULTS.get(key)
+    return value
+
 
 # ============================================================
 # Auth
@@ -158,11 +196,14 @@ def update_config(updates: dict[str, Any]) -> None:
 
 
 def resolve_with_config(user_provided: Optional[Any], key: str) -> tuple[Any, bool]:
-    """如果用户没传(None),从 config 取;返回 (最终值, 是否从 config 取的 bool)。"""
+    """如果用户没传(None),从 config 取;返回 (最终值, 是否从 config 取的 bool)。
+
+    防御性 cast:从 config 读到的数字字段(老脏数据可能存成字符串)会被强转。
+    """
     if user_provided is not None:
         return user_provided, False
     cfg = load_config()
     val = cfg.get(key)
     if val is not None:
-        return val, True
-    return INTERNAL_DEFAULTS.get(key), False
+        return _coerce_to_expected_type(key, val), True
+    return _coerce_to_expected_type(key, INTERNAL_DEFAULTS.get(key)), False
